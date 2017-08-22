@@ -1,0 +1,15 @@
+
+-- 1. input from url, save it as string
+2. save string into the entity (mariadb)
+- mariadb connection setting
+2a. save string into the entity (mongodb)
+- mongodb connection
+3. break down as key-val : hashmap
+4. construct db entity(jpa)
+5. save as json into entity
+6. implement lib util functions
+7. bring batch or event function
+
+{ "배우내용":{"_data_type":"varchar(300)","_infotype_name":"변동문자300","physical_term_name":"ACTOR_CTS","term_name":"배우내용"},
+"부가상품여부":{"_data_type":"",...}
+}

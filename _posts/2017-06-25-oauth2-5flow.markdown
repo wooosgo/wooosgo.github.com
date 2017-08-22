@@ -1,0 +1,51 @@
+---
+layout: post
+title:  "oauth2 flows"
+date:   2017-06-25 11:40:01 +0900
+categories: temp
+---
+
+
+1. Authorization Code flow
+
+https://cloud.digitalocean.com/v1/oauth/authorize?response_type=code&client_id=CLIENT_ID&redirect_uri=CALLBACK_URL&scope=read
+curl -F "grant_type=authorization_code" -F "response_type=code" -F "scope=read" -F "client_id=foo" -F "redirect_uri=http://localhost:8081/test/authorization-code" "http://foo:bar@localhost:8080/oauth/token"
+
+curl -F grant_type=authorization_code \
+-F response_type=code \
+-F client_id=foo \
+-F client_secret=bar \
+-F username=foo \
+-F redirect_uri=http://localhost:8081/test/authorization-code \
+-F scope=read \
+-X POST http://foo:bar@localhost:8080/oauth/token
+
+
+2. Implicit flow
+
+the user is asked to authorize the application,
+then the authorization server passes the access token back to the user-agent, which passes it to the application.
+--> curl 호출 단독 테스트 불가
+
+
+3. Resource Owner Password Credentials
+
+curl foo:bar@localhost:8080/oauth/token -d grant_type=password -d client_id=foo -d scope=read -d username=user -d password=test
+
+{"access_token":"8d1f5b7f-aa3f-4e9f-89d9-d6a2ddc53439","token_type":"bearer","refresh_token":"885749bb-7f95-48a0-9737-402b743e4b03","expires_in":131,"scope":"read"}
+
+
+
+4. Client credential flow
+
+curl -F "grant_type=client_credentials" -F "username=user" -F "password=test" -F "scope=read" -F "client_id=foo" -F "client_secret=bar" -F "redirect_uri=http://localhost:8081/test/authorization-code" "http://foo:bar@localhost:8080/oauth/token"
+
+{"access_token":"205ecdb3-9089-46ca-b129-7370edacfe9d","token_type":"bearer","expires_in":299,"scope":"read"}
+
+
+
+5. Refresh token flow
+
+curl -X POST foo:bar@localhost:8080/oauth/token -F "grant_type=refresh_token" -F "client_id=foo" -F "client_secret=bar" -F refresh_token="885749bb-7f95-48a0-9737-402b743e4b03"
+
+{"access_token":"79936aca-90a1-4e66-9e55-1b42dfe6c6eb","token_type":"bearer","refresh_token":"885749bb-7f95-48a0-9737-402b743e4b03","expires_in":299,"scope":"read"}
