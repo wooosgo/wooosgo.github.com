@@ -1,0 +1,101 @@
+---
+layout: post
+title: "Redis Lua script"
+date:   2017-09-11 10:00:01 +0900
+categories: redis
+layout: post
+---
+
+
+# MULTI ~ EXEC
+:  기본적으로 redis 는 single thread 이면서 명령 단위 atomic operation 인 특성이 있다.
+ 여러 개의 명령으로 이루어진 transaction 처리를 위해서 multi - exec 을 사용해야 한다.
+ multi 이후의 command 들은 모두 transaction queue 에 저장되어 있다가 exec 명령으로 순차적 처리된다.
+ 단, rollback 이 되지 않으므로 완전한 transaction 을 보장할 수 없다.
+
+ MULTI
+ SADD foo a
+ SADD foo b
+ EXEC
+
+ 클라이언트가 SMEMBERS 호출시 결과가 없거나 a,b 둘 다 확인될 수는 있지만 결코 a 만 결과로 확인될 수는 없다(all or nothing)
+
+- DISCARD : 현재 transaction queue 의 내용을 비운다
+- WATCH / UNWATCH : EXEC 실행 전에 큐에 있는 내용을 확인 후 수행될 수 있도록 돕는다
+
+# EXEC 수행 시 error 발생
+: 문법적 오류에 의해 EXEC 수행 전에 에러 발생
+또는 wrong type value 에 의한 EXEC 수행 이후 에러 발생 --> REDIS 는 기본적으로 rollback 을 지원하지 않으므로 주의한다
+(대부분의 에러는 프로그램 로직에서 기인하고, 핸들링 가능하고 이러한 설계를 통해 가벼운 프로세스와 최고의 성능을 보장할 수 있기 때문)
+이러한 경우 AOF 파일을 참조하여 상태를 검증 및 rebuild 할 수 있다.
+
+# Pipelining
+redis 에 command를 파이프라인으로 구성하면 server-client 사이의 network roundtrip 감소로 큰 성능 향상을 볼 수 있다
+가능한 경우 파이프라인 형태를 구성하는게 좋다. 단, atomic 한 처리를 해야 할 경우에는 MULTI-EXEC 를 사용해야 한다
+
+# Pipeline 과 MULTI의 차이 및 Lua script
+파이프라인은 MULTI 와 달리 여러개의 명령을 한번에 서버로 모아서 전송할 뿐 원자적 처리를 보장하지는 않는다.
+원자적 처리가 필요하진 않은 경우에는 MULTI보다 단순히 pipeline 을 사용하는 것이 바람직하다(multi 처리 자체의 cost 및 blocking 성질 때문)
+Lua script 는 Redis 의 MULTI 키워드와 동일하게 동작한다(client 의 multi기능 자체가 lua로 구현됨)
+
+  # Lua script
+  "Lua script 는 상용 환경에서 가급적 사용하지 않는다"
+  lua script 를 사용함으로서 얻을 수 있는 확연한 성능상의 이점을 명확히 제시 할 수 있는 경우에 한해 제한적으로 사용 가능하다.
+
+  서버와 클라이언트 사이에 다량의 데이터 셋을 전송하지 않고 서버사이드에서 한 번에 처리하는 게 유리한 경우,
+  또는 복잡한 읽기 operation이 포함된 경우에 사용한다.
+  lua script 수행이 완료될 때 까지 전체 서버가 block 되므로, 수 micro seconds 이내의 빠른 응답을 보장 받는 경우에 한해 사용한다.
+
+
+  # 라이브러리 지원
+
+  Redis 내장 lua 번역기가 지원하는 라이브러리들은 아래와 같고, 바로 사용 가능하다
+
+  base lib.
+  table lib.
+  string lib.
+  math lib.
+  struct lib.
+  cjson lib.
+  cmsgpack lib.
+  bitop lib.
+  redis.sha1hex, redis.breakpoint and redis.debug functions.
+
+  CJSON
+  json을 고속으로 직렬화/비직렬화 할 수 있는 라이브러리 제공
+
+  redis 127.0.0.1:6379> eval 'return cjson.encode({["foo"]= "bar"})' 0
+  "{\"foo\":\"bar\"}"
+  redis 127.0.0.1:6379> eval 'return cjson.decode(ARGV[1])["foo"]' 0 "{\"foo\":\"bar\"}"
+  "bar"
+
+  cmsgpack
+  message pack을 고속으로 직렬화/비직렬화 할 수 있는 라이브러리 제공
+
+  127.0.0.1:6379> eval 'return cmsgpack.pack({"foo", "bar", "baz"})' 0
+  "\x93\xa3foo\xa3bar\xa3baz"
+  127.0.0.1:6379> eval 'return cmsgpack.unpack(ARGV[1])' 0 "\x93\xa3foo\xa3bar\xa3baz"
+  1) "foo"
+  2) "bar"
+  3) "baz"
+
+  lua의 cjson 을 사용하여 raw json 내부의 키를 직접 access 하는 방법
+
+  if redis.call("EXISTS", KEYS[1]) == 1 then   //  key 가 존재하는지 검사 후 없으면 nil 반환
+    local payload = redis.call("GET", KEYS[1])
+    return cjson.decode(payload)[ARGV[1]]      //  json 을 parse
+  else
+    return nil
+  end
+
+  127.0.0.1:6379>set apple '{ "color": "red", "type": "fruit" }'
+  OK
+
+  redis-cli --eval json-get.lua apple , type   // 위의 script를 eval 하여 type의 value를 바로 반환
+  # "fruit"
+
+
+
+  # references
+  https://redis.io/commands/eval
+  https://www.redisgreen.net/blog/intro-to-lua-for-redis-programmers/

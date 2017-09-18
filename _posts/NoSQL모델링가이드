@@ -1,0 +1,194 @@
+NoSQL modeling guide
+Skip to end of metadata
+Created by 우정명(Woo, Jung Myoung)/솔루션개발그룹/SK, last modified just a moment ago Go to start of metadata
+
+NoSQL과 RDB의 데이터 모델링
+
+설계된 스키마에 어플리케이션이 따르는 것이 아니라, 어플리케이션이 주가 되어 스키마를 설계한다
+(Schema directs application --> Application directs schema (& iterates) )
+
+일반적인 RDB 모델링 설계와 반대의 과정을 따른다
+(기존 RDB 방식)도메인 모델 분석 - 개체간의 relationship 식별 - 테이블/오브젝트 생성 - SQL 작성 - application 에서 사용
+(NoSQL 방식) 도메인 분석 - application 설계 - 쿼리추출 - ((테이블 <-> 모델 설계 - 최적화))
+
+어느 상황에나 꼭 맞는 NoSQL 모델링이란 것은 없다.
+데이터의 성격, 비즈니스 요구사항에 따라 인프라, application, 데이터 모델 각 요소 간에 적당한 합의점을 찾아 최적화 해 나가는 과정이다.
+
+NoSQL의 성능은 데이터 모델 설계가 가장 중요하다.
+스키마가 없고 모델 설계의 제약이 없는 만큼, 전반적으로 데이터 모델 설계가 더욱 중요하다.
+데이터 모델의 설계는 효율적인 자료 구조나 알고리즘을 포함한다.
+
+본 문서의 범위
+
+본 가이드라인에서는 G2 프로젝트에서 주로 다루게 될 대표적인 document 방식 NoSQL인 MongoDB와 in-memory key-value store인 Redis를 중점적으로 다루며,
+이후 time series DB인 influxDB 나 elasticsearch 를 추가적으로 다룰 예정이다.
+NoSQL 데이터 모델링의 핵심
+
+반정규화 (denormalization) 와 중첩(duplication)
+NoSQL 데이터 모델 설계의 가장 기본이 되는 사상
+시스템 리소스의 효율적인 사용(DBMS friendly) 보다, 심플한 형태의 쿼리나 사용자의 비즈니스 특성에 맞는 유연한 설계(USER friendly)가 더 중요하다.
+
+통합 (aggregation) 과 포함(embedding)
+대부분의 NoSQL DB는 soft schema (또는 schema-less) 를 지원한다.
+엔티티를 중첩(embed) 함으로서 1:N 관계를 해소할 수 있고 결국 조인 관계를 해소할 수 있다.
+서로 성격이 다른 비즈니스 엔티티를 하나의 엔티티(테이블 또는 document) 로 생성 가능하다
+
+어플리케이션에서 조인 처리(application side join)
+일반적으로 NoSQL DB들은 DBMS차원의 JOIN을 지원하지 않는다.
+특성이 다른 엔티티들을 다루는 특성 때문에, DBMS단에서 조인을 하지 않고 어플리케이션에서 다이나믹 하게 조인 하는 경우가 많아 진다.
+특히 다대다 관계에서 중첩된 엔티티를 조인해야 하는 경우, 또는 수정이 자주 발생하는 엔티티를 참조하는 경우 어플리케이션에서 조인 처리가 유리하다.
+
+특정 비즈니스 요구사항의 응답 시간에 최적화된 설계
+RDB 와 같이 중복 제거 및 스키마 최적화를 통해 storage 사용을 최소화 하려는 고민은 상대적으로 큰 의미가 없다.
+사용자는 응답을 기다리기 때문에, 응답 시간이 월등하게 중요한 요인이다.
+비즈니스적으로 주로 요청되는 use case를 분석하여 설계 전략에 반영한다.
+모델 부터 인덱스 설계 및 application 처리 로직 까지 전체 흐름을 해당 use case에 최적화 된 결과를 낼 수 있는 방안으로 설계해야 한다
+read 시점이 아니라, 데이터 write 시점에 미리 조인 처리가 유리함
+
+
+MongoDB
+일대 다(one to many) 관계 의 설계
+
+포함(embedding) vs 참조(referencing)
+
+1. many 사이드의 데이터 개수가 적은 경우 포함(embed) 시킨다
+
+> db.person.findOne()
+{
+  name: 'Kate Monster',
+  ssn: '123-456-7890',
+  addresses : [
+     { street: '123 Sesame St', city: 'Anytown', cc: 'USA' },
+     { street: '123 Avenue Q', city: 'New York', cc: 'USA' }
+  ]
+}
+
+장점: 한번의 쿼리로 전체 도큐먼트를 조회 가능하다
+단점: 포함된 데이터 자체를 별도로 조회하기 어렵다
+
+2. many 사이드의 데이터 개수가 많은(약 100건 이내) 경우 참조(reference) 한다
+many side 에 1 사이드를 참조하는 array 를 생성
+
+> db.parts.findOne()
+{
+    _id : ObjectID('AAAA'),
+    partno : '123-aff-456',
+    name : '#4 grommet',
+    qty: 94,
+    cost: 0.94,
+    price: 3.99
+}
+
+
+> db.products.findOne()
+{
+    name : 'left-handed smoke shifter',
+    manufacturer : 'Acme Corp',
+    catalog_number: 1234,
+    parts : [     // array of references to Part documents
+        ObjectID('AAAA'),    // reference to the #4 grommet above
+        ObjectID('F17C'),    // reference to a different Part
+        ObjectID('D2AA'),
+        // etc
+    ]
+}
+
+
+ // Fetch the Product document identified by this catalog number
+> product = db.products.findOne({catalog_number: 1234});
+   // Fetch all the Parts that are linked to this Product
+> product_parts = db.parts.find({_id: { $in : product.parts } } ).toArray();
+
+장점: 양 쪽의 엔티티가 독립된 개체로서 존재하므로 flexible 한 구조
+단점: application side join 이 필요
+
+3. many 사이드의 데이터 개수가 매우 많은(약 300건 이상) 경우 참조(reference) 한다
+many side 에 1사이드를 참조하는 필드를 가짐
+
+> db.hosts.findOne()
+{
+    _id : ObjectID('AAAB'),
+    name : 'goofy.example.com',
+    ipaddr : '127.66.66.66'
+}
+
+>db.logmsg.findOne()
+{
+    time : ISODate("2014-03-28T09:42:41.382Z"),
+    message : 'cpu is on fire!',
+    host: ObjectID('AAAB')       // Reference to the Host document
+}
+
+
+  // find the parent ‘host’ document
+> host = db.hosts.findOne({ipaddr : '127.66.66.66'});  // assumes unique index
+   // find the most recent 5000 log message documents linked to that host
+> last_5k_msg = db.logmsg.find({host: host._id}).sort({time : -1}).limit(5000).toArray()
+장점: 포함되는 데이터의 사이즈가 16MB 도큐먼트 사이즈를 초과할 수 있는 경우에 사용 가능
+단점: application side join 이 필요
+
+4. 양방향 참조
+one 사이드에 참조 array를 두고,  many 사이드에 one 사이드를 참조하는 필드를 가진다
+
+db.person.findOne()
+{
+    _id: ObjectID("AAF1"),
+    name: "Kate Monster",
+    tasks [     // array of references to Task documents
+        ObjectID("ADF9"),
+        ObjectID("AE02"),
+        ObjectID("AE73")
+        // etc
+    ]
+}
+
+
+db.tasks.findOne()
+{
+    _id: ObjectID("ADF9"),
+    description: "Write lesson plan",
+    due_date:  ISODate("2014-04-01"),
+    owner: ObjectID("AAF1")     // Reference to Person document
+}
+
+장점: 양쪽의 상호 참조관계를 통해 flexible한 접근이 가능
+단점: 데이터의 업데이트가 어려움 (양쪽을 모두 찾아 업데이트 해 주어야 함)
+비즈니스 요구사항에 맞거나 atomic 업데이트가 불필요한 경우에만 사용
+5. 반정규화
+장점: application side join 없이 데이터 접근
+단점: 업데이트와 같은 write operation 은 처리가 어려움
+Read / write 비율을 고려하여 읽기 비율이 현저히 높은 케이스에만 적용하는 것이 좋다
+반정규화된 데이터는 atomic 업데이트가 불가하다
+
+
+
+* Two way referencing & Denormalization
+You can use bi-directional referencing if it optimizes your schema, and if you are willing to pay the price of not having atomic updates
+If you are referencing, you can denormalize data either from the “One” side into the “N” side, or from the “N” side into the “One” side
+When deciding whether or not to denormalize, consider the following factors:
+1. You cannot perform an atomic update on denormalized data
+2. Denormalization only makes sense when you have a high read to write ratio
+Consider Denormalization for the sake of
+- Read / Write ratio (when Read is much higher than write)
+- Reduce application level joins
+- but, having more expensive updates
+# Rule of thumb #
+1. favor embedding (
+2. do not embed when accessing the object itself
+3. do not embed when high cardinality arrays are on many side
+- 2~300 documents on many side ; no embed
+- 2~3,000 documents on many side ; no array of objectID references
+4. Application level join is fast enough (with correct index)
+5. Mostly read and seldom write ; good candidate for Denormalizing
+6. design your database schema to match the needs of your application
+
+NoSQL 모델링 시 고려사항
+
+(MongoDB)
+필드명은 가급적 짧게 유지한다
+불필요한 인덱스 또는 인덱싱 컬럼 및 unique 조건이 있는지 확인한다
+Counting , Paging 처리 시 offset 을 최소화한다
+날짜 범위 검색 시 부등 조건(>=) 이 아닌 등호 조건(==) 을 사용할 수 있는지 여부를 확인한다
+
+(Redis)
+(question) 한 컬렉션에 입력되는 값의 개수를 제한한다. 개수가 많다면 컬렉션의 리스트를 별도로 둔다.

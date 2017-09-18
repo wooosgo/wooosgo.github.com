@@ -15,11 +15,15 @@ installation by brew
  * ctrl + b + : -- command line mode
 
 new window : ctrl + b + c
+>                             
 prev window : ctrl + b + p
+>
 prev window : ctrl + b + n
+>
 close window : ctrl + b + &
 
 # change some of key mappings
+
 ``` unbind %
 bind | split-window -h
 bind - split-window -v
@@ -32,3 +36,6 @@ bind - split-window -v
 # pane synchronize key remapping
 ``` bind-key * set-window-option synchronize-panes
 ```
+
+# Reference
+http://blog.hawkhost.com/2010/06/28/tmux-the-terminal-multiplexer/
